@@ -6,7 +6,6 @@ import time
 from . import util, html
 from subprocess import Popen, PIPE
 
-
 try:
     import wandb
 except ImportError:
@@ -22,8 +21,8 @@ def save_images(webpage, visuals, image_path, aspect_ratio=1.0, width=256, use_w
     """Save images to the disk.
 
     Parameters:
-        webpage (the HTML class) -- the HTML webpage class that stores these imaegs (see html.py for more details)
-        visuals (OrderedDict)    -- an ordered dictionary that stores (name, images (either tensor or numpy) ) pairs
+        webpage (the HTML class) -- the HTML webpage class that stores these images (see html.py for more details)
+        visuals (OrderedDict)    -- an ordered dictionary that stores (name, images (either tensor or numpy)) pairs
         image_path (str)         -- the string is used to create image paths
         aspect_ratio (float)     -- the aspect ratio of saved images
         width (int)              -- the images will be resized to width x width
@@ -65,7 +64,7 @@ class Visualizer():
             opt -- stores all the experiment flags; needs to be a subclass of BaseOptions
         Step 1: Cache the training/test options
         Step 2: connect to a visdom server
-        Step 3: create an HTML object for saveing HTML filters
+        Step 3: create an HTML object for saving HTML files
         Step 4: create a logging file to store training losses
         """
         self.opt = opt  # cache the option
@@ -79,7 +78,7 @@ class Visualizer():
         self.current_epoch = 0
         self.ncols = opt.display_ncols
         
-        if self.display_id > 0:  # connect to a visdom server given <display_port> and <display_server>
+        if self.display_id > 0:
             import visdom
             self.vis = visdom.Visdom(server=opt.display_server, port=opt.display_port, env=opt.display_env)
             if not self.vis.check_connection():
@@ -89,12 +88,12 @@ class Visualizer():
             self.wandb_run = wandb.init(project='CycleGAN-and-pix2pix', name=opt.name, config=opt) if not wandb.run else wandb.run
             self.wandb_run._label(repo='CycleGAN-and-pix2pix')
 
-        if self.use_html:  # create an HTML object at <checkpoints_dir>/web/; images will be saved under <checkpoints_dir>/web/images/
+        if self.use_html:
             self.web_dir = os.path.join(opt.checkpoints_dir, opt.name, 'web')
             self.img_dir = os.path.join(self.web_dir, 'images')
             print('create web directory %s...' % self.web_dir)
             util.mkdirs([self.web_dir, self.img_dir])
-        # create a logging file to store training losses
+
         self.log_name = os.path.join(opt.checkpoints_dir, opt.name, 'loss_log.txt')
         with open(self.log_name, "a") as log_file:
             now = time.strftime("%c")
@@ -115,20 +114,19 @@ class Visualizer():
         """Display current results on visdom; save current results to an HTML file.
 
         Parameters:
-            visuals (OrderedDict) - - dictionary of images to display or save
-            epoch (int) - - the current epoch
-            save_result (bool) - - if save the current results to an HTML file
+            visuals (OrderedDict) -- dictionary of images to display or save
+            epoch (int)           -- the current epoch
+            save_result (bool)    -- whether to save the current results to an HTML file
         """
-        if self.display_id > 0:  # show images in the browser using visdom
+        if self.display_id > 0:
             ncols = self.ncols
-            if ncols > 0:        # show all the images in one visdom panel
+            if ncols > 0:
                 ncols = min(ncols, len(visuals))
                 h, w = next(iter(visuals.values())).shape[:2]
                 table_css = """<style>
                         table {border-collapse: separate; border-spacing: 4px; white-space: nowrap; text-align: center}
-                        table td {width: % dpx; height: % dpx; padding: 4px; outline: 4px solid black}
-                        </style>""" % (w, h)  # create a table css
-                # create a table of images.
+                        table td {width: %dpx; height: %dpx; padding: 4px; outline: 4px solid black}
+                        </style>""" % (w, h)
                 title = self.name
                 label_html = ''
                 label_html_row = ''
@@ -157,8 +155,7 @@ class Visualizer():
                                   opts=dict(title=title + ' labels'))
                 except VisdomExceptionBase:
                     self.create_visdom_connections()
-
-            else:     # show each image in a separate visdom panel;
+            else:
                 idx = 1
                 try:
                     for label, image in visuals.items():
@@ -186,23 +183,20 @@ class Visualizer():
                 result_table.add_data(*table_row)
                 self.wandb_run.log({"Result": result_table})
 
-
-        if self.use_html and (save_result or not self.saved):  # save images to an HTML file if they haven't been saved.
+        if self.use_html and (save_result or not self.saved):
             self.saved = True
-            # save images to the disk
             for label, image in visuals.items():
                 image_numpy = util.tensor2im(image)
                 img_path = os.path.join(self.img_dir, 'epoch%.3d_%s.png' % (epoch, label))
                 util.save_image(image_numpy, img_path)
 
-            # update website
             webpage = html.HTML(self.web_dir, 'Experiment name = %s' % self.name, refresh=1)
             for n in range(epoch, 0, -1):
                 webpage.add_header('epoch [%d]' % n)
                 ims, txts, links = [], [], []
 
                 for label, image_numpy in visuals.items():
-                    image_numpy = util.tensor2im(image)
+                    image_numpy = util.tensor2im(image_numpy)
                     img_path = 'epoch%.3d_%s.png' % (n, label)
                     ims.append(img_path)
                     txts.append(label)
@@ -237,7 +231,34 @@ class Visualizer():
         if self.use_wandb:
             self.wandb_run.log(losses)
 
-    # losses: same format as |losses| of plot_current_losses
+    def plot_d_g_losses(self, epoch, counter_ratio, d_loss, g_loss):
+        """Plot discriminator vs generator loss on Visdom in real time.
+
+        Parameters:
+            epoch (int)           -- current epoch
+            counter_ratio (float) -- progress within current epoch (0 to 1)
+            d_loss (float)        -- discriminator loss value
+            g_loss (float)        -- generator loss value
+        """
+        if not hasattr(self, 'd_g_loss_data'):
+            self.d_g_loss_data = {'X': [], 'Y': [], 'legend': ['Discriminator Loss', 'Generator Loss']}
+        self.d_g_loss_data['X'].append(epoch + counter_ratio)
+        self.d_g_loss_data['Y'].append([d_loss, g_loss])
+        try:
+            self.vis.line(
+                X=np.stack([np.array(self.d_g_loss_data['X'])] * 2, 1),
+                Y=np.array(self.d_g_loss_data['Y']),
+                opts={
+                    'title': self.name + ' Discriminator vs Generator Loss',
+                    'legend': self.d_g_loss_data['legend'],
+                    'xlabel': 'Epoch',
+                    'ylabel': 'Loss'
+                },
+                win=self.display_id + 100
+            )
+        except VisdomExceptionBase:
+            self.create_visdom_connections()
+
     def print_current_losses(self, epoch, iters, losses, t_comp, t_data):
         """print current losses on console; also save the losses to the disk
 
@@ -252,6 +273,7 @@ class Visualizer():
         for k, v in losses.items():
             message += '%s: %.3f ' % (k, v)
 
-        print(message)  # print the message
+        print(message)
         with open(self.log_name, "a") as log_file:
-            log_file.write('%s\n' % message)  # save the message
+            log_file.write('%s\n' % message)
+
